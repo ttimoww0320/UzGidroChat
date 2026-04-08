@@ -1,6 +1,8 @@
 from fastapi import WebSocket
 from typing import Dict, List
-import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -8,20 +10,20 @@ class ConnectionManager:
         self.active_connections: Dict[int, WebSocket] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int):
-        await websocket.accept()
-        old = self.active_connections.get(user_id)
-        if old is not None:
+        # Закрываем старое соединение если пользователь уже подключён
+        if user_id in self.active_connections:
             try:
-                await old.close()
+                await self.active_connections[user_id].close(code=1000)
             except Exception:
                 pass
+        await websocket.accept()
         self.active_connections[user_id] = websocket
-        print(f"Пользователь {user_id} подключился. Всего онлайн: {len(self.active_connections)}")
+        logger.info(f"Пользователь {user_id} подключился. Всего онлайн: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket, user_id: int):
         if user_id in self.active_connections and self.active_connections[user_id] is websocket:
             del self.active_connections[user_id]
-        print(f"Пользователь {user_id} отключился. Всего онлайн: {len(self.active_connections)}")
+        logger.info(f"Пользователь {user_id} отключился. Всего онлайн: {len(self.active_connections)}")
 
     async def send_personal_message(self, message: dict, user_id: int):
         if user_id in self.active_connections:
@@ -29,11 +31,12 @@ class ConnectionManager:
 
     async def broadcast(self, message: dict):
         """Отправить сообщение всем подключённым пользователям"""
-        dead: List[int] = []
+        dead: list[int] = []
         for user_id, connection in self.active_connections.items():
             try:
                 await connection.send_json(message)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Ошибка отправки пользователю {user_id}: {e}")
                 dead.append(user_id)
         for user_id in dead:
             self.active_connections.pop(user_id, None)

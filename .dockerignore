@@ -1,0 +1,10 @@
+.env
+.git
+.github
+*.md
+backend/venv
+backend/__pycache__
+backend/*.pyc
+desktop/uzgidrochat-app/node_modules
+desktop/uzgidrochat-app/dist
+release

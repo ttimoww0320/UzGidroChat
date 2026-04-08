@@ -3,9 +3,13 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, BehaviorSubject } from 'rxjs';
 import { tap } from 'rxjs/operators';
 
-// В Electron используем прямой адрес сервера, в браузере — относительный URL (nginx проксирует)
-const isElectron = navigator.userAgent.includes('Electron');
-const API_URL = isElectron ? 'http://10.0.90.92:8000' : '';
+declare global {
+  interface Window {
+    electronAPI?: { isElectron: boolean; backendHost: string };
+  }
+}
+
+const BACKEND_HOST = window.electronAPI?.backendHost ?? '';
 
 export interface User {
   id: number;
@@ -33,14 +37,18 @@ export class AuthService {
   public currentUser$ = this.currentUserSubject.asObservable();
 
   constructor(private http: HttpClient) {
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
-      this.currentUserSubject.next(JSON.parse(savedUser));
+    try {
+      const savedUser = localStorage.getItem('user');
+      if (savedUser) {
+        this.currentUserSubject.next(JSON.parse(savedUser));
+      }
+    } catch {
+      localStorage.clear();
     }
   }
 
   register(username: string, email: string, password: string, fullName: string): Observable<User> {
-    return this.http.post<User>(`${API_URL}/register`, {
+    return this.http.post<User>(`${BACKEND_HOST}/register`, {
       username,
       email,
       password,
@@ -49,10 +57,7 @@ export class AuthService {
   }
 
   login(username: string, password: string): Observable<LoginResponse> {
-    return this.http.post<LoginResponse>(`${API_URL}/login`, {
-      username,
-      password
-    }).pipe(
+    return this.http.post<LoginResponse>(`${BACKEND_HOST}/login`, { username, password }).pipe(
       tap(response => {
         localStorage.setItem('token', response.access_token);
         localStorage.setItem('user', JSON.stringify(response.user));

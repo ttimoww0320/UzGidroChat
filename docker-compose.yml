@@ -2,7 +2,6 @@ version: '3.9'
 
 services:
 
-  # PostgreSQL база данных
   db:
     image: postgres:16-alpine
     container_name: uzgidrochat_db
@@ -20,7 +19,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # FastAPI бэкенд
   backend:
     build: ./backend
     container_name: uzgidrochat_backend
@@ -32,13 +30,19 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY}
+      CORS_ORIGINS: ${CORS_ORIGINS}
     volumes:
       - uploads_data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
-  # Angular фронтенд + Nginx
   frontend:
     build: ./desktop/uzgidrochat-app
     container_name: uzgidrochat_frontend
@@ -46,7 +50,8 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:

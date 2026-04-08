@@ -4,7 +4,6 @@ const path = require('path');
 let mainWindow;
 
 function createWindow() {
-  // Определяем путь к иконке
   let iconPath;
   if (app.isPackaged) {
     iconPath = path.join(process.resourcesPath, 'app', 'src', 'assets', 'icon.png');
@@ -19,16 +18,18 @@ function createWindow() {
     minHeight: 600,
     icon: iconPath,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
     title: 'UzGidroChat'
   });
 
   const indexPath = path.join(__dirname, 'dist', 'uzgidrochat-app', 'browser', 'index.html');
-  
+
   mainWindow.loadFile(indexPath).catch(err => {
-    console.error('Ошибка:', err);
+    console.error('Ошибка загрузки:', err);
   });
 
   mainWindow.on('closed', () => {

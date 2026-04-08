@@ -1,15 +1,18 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import bcrypt
-from jose import jwt
+from jose import jwt, JWTError
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 
-# Секретный ключ для JWT токенов — берём из переменной окружения
-SECRET_KEY = os.getenv("SECRET_KEY", "uzgidrochat-secret-key-2024-very-secure")
+# Секретный ключ для JWT токенов — обязателен через переменную окружения
+SECRET_KEY = os.environ["SECRET_KEY"]
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 часа
 
+_bearer = HTTPBearer()
 
-# Хешировать пароль
+
 def hash_password(password: str) -> str:
     password_bytes = password.encode('utf-8')
     salt = bcrypt.gensalt()
@@ -17,26 +20,34 @@ def hash_password(password: str) -> str:
     return hashed.decode('utf-8')
 
 
-# Проверить пароль
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     password_bytes = plain_password.encode('utf-8')
     hashed_bytes = hashed_password.encode('utf-8')
     return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 
-# Создать JWT токен
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 
-# Декодировать JWT токен
 def decode_token(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except:
+    except JWTError:
         return None
+
+
+def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> int:
+    token = credentials.credentials
+    payload = decode_token(token)
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недействительный токен")
+    user_id = payload.get("user_id")
+    if user_id is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недействительный токен")
+    return int(user_id)

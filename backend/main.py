@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 import json
+import re
+import time
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -73,6 +75,29 @@ app.add_middleware(
 )
 
 
+# UUID-содержащие имена файлов, которые мы генерируем сами
+_UUID_IN_FILENAME = re.compile(
+    r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+    re.IGNORECASE,
+)
+
+# Словарь для rate limiting typing-статусов: user_id -> timestamp последнего события
+_typing_last_sent: dict[int, float] = {}
+
+
+def _safe_upload_filename(stored_path: str | None) -> str | None:
+    """Безопасно извлекает имя файла из хранимого пути.
+    Возвращает None, если путь подозрителен (нет UUID — значит не наш файл).
+    """
+    if not stored_path:
+        return None
+    name = os.path.basename(stored_path)
+    if not _UUID_IN_FILENAME.search(name):
+        logger.warning("Подозрительный путь к файлу в БД: %s", stored_path)
+        return None
+    return name
+
+
 def get_file_type(filename: str) -> str:
     ext = Path(filename).suffix.lstrip('.').lower()
     for file_type, extensions in ALLOWED_EXTENSIONS.items():
@@ -113,6 +138,7 @@ async def register(request: Request, user: UserCreate, db: Session = Depends(get
 async def login(request: Request, user: UserLogin, db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.username == user.username).first()
     if not db_user or not verify_password(user.password, db_user.hashed_password):
+        logger.warning("Неудачная попытка входа: пользователь '%s'", user.username)
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
     access_token = create_access_token(data={"sub": db_user.username, "user_id": db_user.id})
@@ -140,7 +166,9 @@ async def get_online_users(_: int = Depends(get_current_user_id)):
 
 
 @app.post("/users/{user_id}/avatar")
+@limiter.limit("5/minute")
 async def upload_avatar(
+    request: Request,
     user_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -171,10 +199,11 @@ async def upload_avatar(
             buffer.write(chunk)
 
     if user.avatar_path:
-        old_name = user.avatar_path.split("/uploads/")[-1]
-        old_path = os.path.join(UPLOAD_DIR, old_name)
-        if os.path.exists(old_path):
-            os.remove(old_path)
+        old_name = _safe_upload_filename(user.avatar_path)
+        if old_name:
+            old_path = os.path.join(UPLOAD_DIR, old_name)
+            if os.path.exists(old_path):
+                os.remove(old_path)
 
     user.avatar_path = f"/uploads/{unique_filename}"
     db.commit()
@@ -196,10 +225,11 @@ async def delete_avatar(
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     if user.avatar_path:
-        old_name = user.avatar_path.split("/uploads/")[-1]
-        old_path = os.path.join(UPLOAD_DIR, old_name)
-        if os.path.exists(old_path):
-            os.remove(old_path)
+        old_name = _safe_upload_filename(user.avatar_path)
+        if old_name:
+            old_path = os.path.join(UPLOAD_DIR, old_name)
+            if os.path.exists(old_path):
+                os.remove(old_path)
 
     user.avatar_path = None
     db.commit()
@@ -250,6 +280,8 @@ async def get_group(
     group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Группа не найдена")
+    if current_user_id not in {m.id for m in group.members}:
+        raise HTTPException(status_code=403, detail="Вы не являетесь членом этой группы")
     return group
 
 
@@ -316,10 +348,32 @@ async def create_message(
     db: Session = Depends(get_db),
     current_user_id: int = Depends(get_current_user_id),
 ):
+    # Проверка доступа к получателю/группе
+    if message.group_id:
+        group = db.query(Group).filter(Group.id == message.group_id).first()
+        if not group:
+            raise HTTPException(status_code=404, detail="Группа не найдена")
+        if current_user_id not in {m.id for m in group.members}:
+            raise HTTPException(status_code=403, detail="Вы не являетесь членом этой группы")
+    elif message.receiver_id:
+        receiver = db.query(User).filter(User.id == message.receiver_id).first()
+        if not receiver:
+            raise HTTPException(status_code=404, detail="Получатель не найден")
+    else:
+        raise HTTPException(status_code=400, detail="Необходимо указать receiver_id или group_id")
+
     if message.reply_to_id:
         reply = db.query(Message).filter(Message.id == message.reply_to_id).first()
-        if not reply:
+        if not reply or reply.is_deleted:
             raise HTTPException(status_code=404, detail="Сообщение для ответа не найдено")
+        # Проверяем, что пользователь имеет доступ к сообщению, на которое отвечает
+        if reply.group_id:
+            reply_group = db.query(Group).filter(Group.id == reply.group_id).first()
+            if not reply_group or current_user_id not in {m.id for m in reply_group.members}:
+                raise HTTPException(status_code=403, detail="Нет доступа к этому сообщению")
+        elif reply.receiver_id:
+            if current_user_id not in (reply.sender_id, reply.receiver_id):
+                raise HTTPException(status_code=403, detail="Нет доступа к этому сообщению")
 
     db_message = Message(
         content=message.content,
@@ -352,7 +406,9 @@ async def create_message(
 
 
 @app.post("/messages/upload", response_model=MessageResponse)
+@limiter.limit("20/minute")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     receiver_id: Optional[int] = None,
     group_id: Optional[int] = None,
@@ -361,6 +417,18 @@ async def upload_file(
 ):
     if not receiver_id and not group_id:
         raise HTTPException(status_code=400, detail="Необходимо указать receiver_id или group_id")
+
+    # Проверка доступа к получателю/группе
+    if group_id:
+        group = db.query(Group).filter(Group.id == group_id).first()
+        if not group:
+            raise HTTPException(status_code=404, detail="Группа не найдена")
+        if current_user_id not in {m.id for m in group.members}:
+            raise HTTPException(status_code=403, detail="Вы не являетесь членом этой группы")
+    elif receiver_id:
+        receiver = db.query(User).filter(User.id == receiver_id).first()
+        if not receiver:
+            raise HTTPException(status_code=404, detail="Получатель не найден")
 
     ext = Path(file.filename).suffix.lstrip('.').lower()
     if ext not in ALL_ALLOWED_EXTENSIONS:
@@ -500,10 +568,58 @@ async def delete_message(
     return {"message": "Сообщение удалено"}
 
 
+# ==================== READ RECEIPTS ====================
+
+@app.post("/messages/{user_id}/{other_user_id}/read")
+async def mark_messages_read(
+    user_id: int,
+    other_user_id: int,
+    db: Session = Depends(get_db),
+    current_user_id: int = Depends(get_current_user_id),
+):
+    if current_user_id != user_id:
+        raise HTTPException(status_code=403, detail="Нет доступа")
+    db.query(Message).filter(
+        Message.is_deleted == False,  # noqa: E712
+        Message.is_read == False,  # noqa: E712
+        Message.receiver_id == current_user_id,
+        Message.sender_id == other_user_id,
+    ).update({"is_read": True})
+    db.commit()
+    return {"message": "Сообщения прочитаны"}
+
+
+@app.post("/messages/group/{group_id}/read")
+async def mark_group_messages_read(
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user_id: int = Depends(get_current_user_id),
+):
+    group = db.query(Group).filter(Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
+    if current_user_id not in {m.id for m in group.members}:
+        raise HTTPException(status_code=403, detail="Вы не являетесь членом этой группы")
+    db.query(Message).filter(
+        Message.group_id == group_id,
+        Message.is_deleted == False,  # noqa: E712
+        Message.is_read == False,  # noqa: E712
+        Message.sender_id != current_user_id,
+    ).update({"is_read": True})
+    db.commit()
+    return {"message": "Сообщения прочитаны"}
+
+
 # ==================== WEBSOCKET ====================
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int, token: str, db: Session = Depends(get_db)):
+    # Валидация Origin: если заголовок присутствует — он должен быть в списке разрешённых
+    origin = websocket.headers.get("origin")
+    if origin and origin not in CORS_ORIGINS:
+        await websocket.close(code=4003)
+        return
+
     payload = decode_token(token)
     if payload is None or payload.get("user_id") != user_id:
         await websocket.close(code=4001)
@@ -519,18 +635,33 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, token: str, db:
 
     try:
         while True:
-            data = await websocket.receive_json()
+            try:
+                data = await websocket.receive_json()
+            except (ValueError, json.JSONDecodeError):
+                continue
 
-            if data.get("type") == "ping":
+            if not isinstance(data, dict):
+                continue
+
+            msg_type = data.get("type")
+
+            if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
 
-            elif data.get("type") == "typing":
+            elif msg_type == "typing":
                 receiver_id = data.get("receiver_id")
                 is_typing = data.get("is_typing", False)
-                if receiver_id:
-                    await manager.send_typing_status(user_id, receiver_id, is_typing)
+                if not isinstance(receiver_id, int) or not isinstance(is_typing, bool):
+                    continue
+                # Rate limit: не более 2 typing-событий в секунду на пользователя
+                now = time.monotonic()
+                if now - _typing_last_sent.get(user_id, 0.0) < 0.5:
+                    continue
+                _typing_last_sent[user_id] = now
+                await manager.send_typing_status(user_id, receiver_id, is_typing)
 
     except WebSocketDisconnect:
+        _typing_last_sent.pop(user_id, None)
         manager.disconnect(websocket, user_id)
         user = db.query(User).filter(User.id == user_id).first()
         if user:

@@ -8,7 +8,7 @@ import os
 # Секретный ключ для JWT токенов — обязателен через переменную окружения
 SECRET_KEY = os.environ["SECRET_KEY"]
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 часа
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # по умолчанию 24 часа
 
 _bearer = HTTPBearer()
 

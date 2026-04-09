@@ -1213,7 +1213,8 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   connectWebSocket(): void {
     if (this.currentUser) {
-      this.chatService.connectWebSocket(this.currentUser.id);
+      const token = localStorage.getItem('token') || '';
+      this.chatService.connectWebSocket(this.currentUser.id, token);
       
       this.subscription = this.chatService.messages$.subscribe((data) => {
         if (data.type === 'new_message') {
@@ -1293,10 +1294,13 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   loadMessages(): void {
     if (this.currentUser && this.selectedUser) {
-      this.chatService.getMessages(this.currentUser.id, this.selectedUser.id).subscribe({
+      const userId = this.currentUser.id;
+      const otherId = this.selectedUser.id;
+      this.chatService.getMessages(userId, otherId).subscribe({
         next: (messages) => {
           this.messages = messages;
           this.scrollToBottom();
+          this.chatService.markMessagesRead(userId, otherId).subscribe();
         }
       });
     }
@@ -1304,10 +1308,12 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   loadGroupMessages(): void {
     if (this.selectedGroup) {
-      this.chatService.getGroupMessages(this.selectedGroup.id).subscribe({
+      const groupId = this.selectedGroup.id;
+      this.chatService.getGroupMessages(groupId).subscribe({
         next: (messages) => {
           this.messages = messages;
           this.scrollToBottom();
+          this.chatService.markGroupMessagesRead(groupId).subscribe();
         }
       });
     }

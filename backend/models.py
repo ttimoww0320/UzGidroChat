@@ -1,7 +1,11 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Table
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from database import Base
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
 
 # Таблица связи пользователей и групп
 group_members = Table(
@@ -24,7 +28,7 @@ class User(Base):
     is_online = Column(Boolean, default=False)
     last_seen = Column(DateTime, nullable=True)
     avatar_path = Column(String(500), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     
     groups = relationship("Group", secondary=group_members, back_populates="members")
 
@@ -36,7 +40,7 @@ class Group(Base):
     name = Column(String(100))
     description = Column(String(255), nullable=True)
     creator_id = Column(Integer, ForeignKey('users.id'))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     
     members = relationship("User", secondary=group_members, back_populates="groups")
     creator = relationship("User", foreign_keys=[creator_id])
@@ -53,7 +57,7 @@ class Message(Base):
     is_read = Column(Boolean, default=False)
     is_edited = Column(Boolean, default=False)
     is_deleted = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     edited_at = Column(DateTime, nullable=True)
     
     # Поля для файлов

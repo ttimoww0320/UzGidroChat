@@ -3,10 +3,14 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, Subject } from 'rxjs';
 
 
-// В Electron используем прямой адрес сервера, в браузере — относительный URL (nginx проксирует)
-const isElectron = navigator.userAgent.includes('Electron');
-const API_URL = isElectron ? 'http://10.0.90.92:8000' : '';
-const WS_URL = isElectron ? 'ws://10.0.90.92:8000' : `ws://${window.location.host}`;
+// В Electron backendHost приходит из preload, в браузере nginx проксирует относительные URL
+const BACKEND_HOST: string = (window as any).electronAPI?.backendHost ?? '';
+const isElectron = !!(window as any).electronAPI?.isElectron;
+const API_URL = BACKEND_HOST;
+const wsScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = isElectron
+  ? BACKEND_HOST.replace(/^http/, 'ws')
+  : `${wsScheme}//${window.location.host}`;
 
 export interface Message {
   id: number;
@@ -58,22 +62,26 @@ export class ChatService {
 
   constructor(private http: HttpClient) {}
 
-  connectWebSocket(userId: number): void {
-  this.socket = new WebSocket(`${WS_URL}/ws/${userId}`);
-  
-  this.socket.onopen = () => {
-    console.log('WebSocket подключён');
-  };
-  
-  this.socket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    this.messagesSubject.next(data);
-  };
-  
-  this.socket.onclose = () => {
-    console.log('WebSocket отключён');
-  };
-}
+  connectWebSocket(userId: number, token: string): void {
+    this.socket = new WebSocket(`${WS_URL}/ws/${userId}?token=${encodeURIComponent(token)}`);
+
+    this.socket.onopen = () => {
+      console.log('WebSocket подключён');
+    };
+
+    this.socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      this.messagesSubject.next(data);
+    };
+
+    this.socket.onerror = (event) => {
+      console.error('WebSocket ошибка:', event);
+    };
+
+    this.socket.onclose = () => {
+      console.log('WebSocket отключён');
+    };
+  }
 
 sendTypingStatus(receiverId: number, isTyping: boolean): void {
   if (this.socket && this.socket.readyState === WebSocket.OPEN) {
@@ -102,39 +110,43 @@ sendTypingStatus(receiverId: number, isTyping: boolean): void {
     return this.http.get<Message[]>(`${API_URL}/messages/${userId}/${otherUserId}`);
   }
 
-  sendMessage(senderId: number, receiverId: number | null, content: string, groupId: number | null, replyToId: number | null = null): Observable<Message> {
-  return this.http.post<Message>(`${API_URL}/messages`, {
-    sender_id: senderId,
-    receiver_id: receiverId,
-    content: content,
-    group_id: groupId,
-    reply_to_id: replyToId
-  });
-}
+  sendMessage(_senderId: number, receiverId: number | null, content: string, groupId: number | null, replyToId: number | null = null): Observable<Message> {
+    return this.http.post<Message>(`${API_URL}/messages`, {
+      receiver_id: receiverId,
+      content: content,
+      group_id: groupId,
+      reply_to_id: replyToId
+    });
+  }
 
   // Upload file
-  uploadFile(file: File, userId: number, receiverId: number | null, groupId: number | null): Observable<any> {
+  uploadFile(file: File, _userId: number, receiverId: number | null, groupId: number | null): Observable<any> {
     const formData = new FormData();
     formData.append('file', file);
-    
-    let url = `${API_URL}/messages/upload?user_id=${userId}`;
-    if (receiverId) {
-      url += `&receiver_id=${receiverId}`;
-    }
-    if (groupId) {
-      url += `&group_id=${groupId}`;
-    }
-    
-    return this.http.post(url, formData);
+
+    const params: string[] = [];
+    if (receiverId) params.push(`receiver_id=${receiverId}`);
+    if (groupId) params.push(`group_id=${groupId}`);
+    const query = params.length ? `?${params.join('&')}` : '';
+
+    return this.http.post(`${API_URL}/messages/upload${query}`, formData);
+  }
+
+  markMessagesRead(userId: number, otherUserId: number): Observable<any> {
+    return this.http.post(`${API_URL}/messages/${userId}/${otherUserId}/read`, {});
+  }
+
+  markGroupMessagesRead(groupId: number): Observable<any> {
+    return this.http.post(`${API_URL}/messages/group/${groupId}/read`, {});
   }
 
   // Groups
-  getGroups(userId: number): Observable<Group[]> {
-    return this.http.get<Group[]>(`${API_URL}/groups?user_id=${userId}`);
+  getGroups(_userId: number): Observable<Group[]> {
+    return this.http.get<Group[]>(`${API_URL}/groups`);
   }
 
-  createGroup(creatorId: number, name: string, description: string, memberIds: number[]): Observable<Group> {
-    return this.http.post<Group>(`${API_URL}/groups?creator_id=${creatorId}`, {
+  createGroup(_creatorId: number, name: string, description: string, memberIds: number[]): Observable<Group> {
+    return this.http.post<Group>(`${API_URL}/groups`, {
       name,
       description,
       member_ids: memberIds
@@ -144,17 +156,15 @@ sendTypingStatus(receiverId: number, isTyping: boolean): void {
   getGroupMessages(groupId: number): Observable<Message[]> {
     return this.http.get<Message[]>(`${API_URL}/messages/group/${groupId}`);
   }
-  // Edit message
-editMessage(messageId: number, userId: number, content: string): Observable<Message> {
-  return this.http.put<Message>(`${API_URL}/messages/${messageId}?user_id=${userId}`, {
-    content
-  });
-}
+    // Edit message
+  editMessage(messageId: number, _userId: number, content: string): Observable<Message> {
+    return this.http.put<Message>(`${API_URL}/messages/${messageId}`, { content });
+  }
 
-// Delete message
-deleteMessage(messageId: number, userId: number): Observable<any> {
-  return this.http.delete(`${API_URL}/messages/${messageId}?user_id=${userId}`);
-}
+  // Delete message
+  deleteMessage(messageId: number, _userId: number): Observable<any> {
+    return this.http.delete(`${API_URL}/messages/${messageId}`);
+  }
 // Avatar
 uploadAvatar(userId: number, file: File): Observable<any> {
   const formData = new FormData();

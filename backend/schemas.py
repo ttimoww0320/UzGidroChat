@@ -1,19 +1,19 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 from datetime import datetime
 
 
 # --- User схемы ---
 class UserCreate(BaseModel):
-    username: str
-    email: str
-    password: str
-    full_name: str
+    username: str = Field(..., min_length=3, max_length=50, pattern=r'^[a-zA-Z0-9_]+$')
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str = Field(..., min_length=1, max_length=100)
 
 
 class UserLogin(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=50)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -39,8 +39,8 @@ class Token(BaseModel):
 
 # --- Group схемы ---
 class GroupCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
     member_ids: List[int] = []
 
 
@@ -62,8 +62,7 @@ class GroupAddMembers(BaseModel):
 
 # --- Message схемы ---
 class MessageCreate(BaseModel):
-    content: Optional[str] = None
-    sender_id: int
+    content: Optional[str] = Field(None, max_length=10000)
     receiver_id: Optional[int] = None
     group_id: Optional[int] = None
     reply_to_id: Optional[int] = None
@@ -88,7 +87,7 @@ class MessageResponse(BaseModel):
 
     class Config:
         from_attributes = True
-    
+
 
 class MessageUpdate(BaseModel):
-    content: str
+    content: str = Field(..., min_length=1, max_length=10000)

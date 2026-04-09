@@ -14,8 +14,8 @@ class ConnectionManager:
         if user_id in self.active_connections:
             try:
                 await self.active_connections[user_id].close(code=1000)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Ошибка закрытия старого соединения пользователя %s: %s", user_id, e)
         await websocket.accept()
         self.active_connections[user_id] = websocket
         logger.info(f"Пользователь {user_id} подключился. Всего онлайн: {len(self.active_connections)}")

@@ -23,10 +23,10 @@
       "output": "release"
     },
     "files": [
-  "dist/**/*",
-  "electron.js",
-  "package.json",
-  "src/assets/**/*"
+      "dist/**/*",
+      "electron.js",
+      "preload.js",
+      "package.json"
     ],
     "win": {
   "target": "nsis",

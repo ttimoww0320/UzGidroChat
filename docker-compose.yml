@@ -44,7 +44,9 @@ services:
       start_period: 15s
 
   frontend:
-    build: ./desktop/uzgidrochat-app
+    build:
+      context: .
+      dockerfile: desktop/uzgidrochat-app/Dockerfile
     container_name: uzgidrochat_frontend
     restart: always
     ports:

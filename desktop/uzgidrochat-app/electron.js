@@ -1,9 +1,16 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, session } = require('electron');
 const path = require('path');
 
 let mainWindow;
 
 function createWindow() {
+  // Electron загружает страницу через file://, поэтому браузер отправляет Origin: null.
+  // Перехватываем заголовки и подставляем корректный Origin, чтобы CORS на бэкенде пропускал запросы.
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    details.requestHeaders['Origin'] = 'http://localhost';
+    callback({ requestHeaders: details.requestHeaders });
+  });
+
   let iconPath;
   if (app.isPackaged) {
     iconPath = path.join(process.resourcesPath, 'app', 'src', 'assets', 'icon.png');

@@ -11,12 +11,12 @@ class ConnectionManager:
 
     async def connect(self, websocket: WebSocket, user_id: int):
         # Закрываем старое соединение если пользователь уже подключён
+        # (accept() уже вызван в endpoint до вызова connect)
         if user_id in self.active_connections:
             try:
                 await self.active_connections[user_id].close(code=1000)
             except Exception as e:
                 logger.warning("Ошибка закрытия старого соединения пользователя %s: %s", user_id, e)
-        await websocket.accept()
         self.active_connections[user_id] = websocket
         logger.info(f"Пользователь {user_id} подключился. Всего онлайн: {len(self.active_connections)}")
 

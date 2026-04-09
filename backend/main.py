@@ -614,12 +614,16 @@ async def mark_group_messages_read(
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int, token: str, db: Session = Depends(get_db)):
-    # Валидация Origin: если заголовок присутствует — он должен быть в списке разрешённых
+    # Принимаем соединение ПЕРВЫМ — close() до accept() вызывает 404 в Starlette
+    await websocket.accept()
+
+    # Валидация Origin
     origin = websocket.headers.get("origin")
     if origin and origin not in CORS_ORIGINS:
         await websocket.close(code=4003)
         return
 
+    # Валидация токена
     payload = decode_token(token)
     if payload is None or payload.get("user_id") != user_id:
         await websocket.close(code=4001)

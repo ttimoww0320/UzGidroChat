@@ -6,7 +6,7 @@ import { Observable, Subject } from 'rxjs';
 // В Electron backendHost приходит из preload, в браузере nginx проксирует относительные URL
 const BACKEND_HOST: string = (window as any).electronAPI?.backendHost ?? '';
 const isElectron = !!(window as any).electronAPI?.isElectron;
-const API_URL = BACKEND_HOST;
+const API_URL = BACKEND_HOST + '/api';
 const wsScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const WS_URL = isElectron
   ? BACKEND_HOST.replace(/^http/, 'ws')

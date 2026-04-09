@@ -48,7 +48,7 @@ export class AuthService {
   }
 
   register(username: string, email: string, password: string, fullName: string): Observable<User> {
-    return this.http.post<User>(`${BACKEND_HOST}/register`, {
+    return this.http.post<User>(`${BACKEND_HOST}/api/register`, {
       username,
       email,
       password,
@@ -57,7 +57,7 @@ export class AuthService {
   }
 
   login(username: string, password: string): Observable<LoginResponse> {
-    return this.http.post<LoginResponse>(`${BACKEND_HOST}/login`, { username, password }).pipe(
+    return this.http.post<LoginResponse>(`${BACKEND_HOST}/api/login`, { username, password }).pipe(
       tap(response => {
         localStorage.setItem('token', response.access_token);
         localStorage.setItem('user', JSON.stringify(response.user));

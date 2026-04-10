@@ -1,24 +1,14 @@
 import { inject } from '@angular/core';
 import { Router, CanActivateFn } from '@angular/router';
+import { AuthService } from '../services/auth';
 
 export const authGuard: CanActivateFn = () => {
   const router = inject(Router);
+  const authService = inject(AuthService);
 
-  const token = localStorage.getItem('token');
-  if (!token) {
-    router.navigate(['/login']);
-    return false;
-  }
-
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
-      localStorage.clear();
-      router.navigate(['/login']);
-      return false;
-    }
-  } catch {
-    localStorage.clear();
+  // Токен уже загружен в AuthService.init() через APP_INITIALIZER до активации маршрутов.
+  // Проверка подлинности и срока действия токена выполняется на сервере при каждом запросе.
+  if (!authService.isLoggedIn()) {
     router.navigate(['/login']);
     return false;
   }

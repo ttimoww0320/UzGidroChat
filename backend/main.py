@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconn
 import json
 import re
 import time
+import unicodedata
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -36,8 +37,13 @@ logger = logging.getLogger(__name__)
 
 limiter = Limiter(key_func=get_remote_address)
 
-_cors_origins_env = os.getenv("CORS_ORIGINS", "http://localhost,http://localhost:4200")
+_cors_origins_env = os.getenv("CORS_ORIGINS", "")
 CORS_ORIGINS = [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+if not CORS_ORIGINS:
+    logger.warning(
+        "CORS_ORIGINS не задан — все источники будут заблокированы. "
+        "Укажите переменную окружения CORS_ORIGINS (например: http://localhost,http://your-server-ip)"
+    )
 
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
@@ -64,6 +70,23 @@ async def log_requests(request: Request, call_next):
     logger.info("%s %s → %s", request.method, request.url.path, response.status_code)
     return response
 
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
+        "connect-src 'self' ws: wss:;"
+    )
+    return response
+
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 app.add_middleware(
@@ -82,6 +105,8 @@ _UUID_IN_FILENAME = re.compile(
 )
 
 # Словарь для rate limiting typing-статусов: user_id -> timestamp последнего события
+# Максимальный размер — 10 000 записей во избежание утечки памяти
+_TYPING_DICT_MAX_SIZE = 10_000
 _typing_last_sent: dict[int, float] = {}
 
 
@@ -96,6 +121,19 @@ def _safe_upload_filename(stored_path: str | None) -> str | None:
         logger.warning("Подозрительный путь к файлу в БД: %s", stored_path)
         return None
     return name
+
+
+def sanitize_text(text: str | None) -> str | None:
+    """Убирает управляющие символы и нормализует Unicode.
+    Разрешены только пробельные символы: \\n, \\r, \\t.
+    """
+    if text is None:
+        return None
+    text = unicodedata.normalize('NFC', text)
+    return ''.join(
+        ch for ch in text
+        if ch in ('\n', '\r', '\t') or not unicodedata.category(ch).startswith('C')
+    )
 
 
 def get_file_type(filename: str) -> str:
@@ -260,6 +298,7 @@ async def create_group(
 
     db.commit()
     db.refresh(db_group)
+    logger.info("AUDIT: пользователь %s создал группу '%s' (id=%s)", current_user_id, db_group.name, db_group.id)
     return db_group
 
 
@@ -304,6 +343,7 @@ async def add_members(
             group.members.append(member)
 
     db.commit()
+    logger.info("AUDIT: пользователь %s добавил участников %s в группу %s", current_user_id, data.user_ids, group_id)
     return {"message": "Участники добавлены"}
 
 
@@ -324,6 +364,7 @@ async def remove_member(
     if user and user in group.members:
         group.members.remove(user)
         db.commit()
+        logger.info("AUDIT: пользователь %s удалил участника %s из группы %s", current_user_id, user_id, group_id)
 
     return {"message": "Участник удалён"}
 
@@ -343,7 +384,9 @@ async def _notify_message_update(data: dict, message: Message, db: Session):
 
 
 @app.post("/messages", response_model=MessageResponse)
+@limiter.limit("30/minute")
 async def create_message(
+    request: Request,
     message: MessageCreate,
     db: Session = Depends(get_db),
     current_user_id: int = Depends(get_current_user_id),
@@ -376,7 +419,7 @@ async def create_message(
                 raise HTTPException(status_code=403, detail="Нет доступа к этому сообщению")
 
     db_message = Message(
-        content=message.content,
+        content=sanitize_text(message.content),
         sender_id=current_user_id,
         receiver_id=message.receiver_id,
         group_id=message.group_id,
@@ -452,7 +495,7 @@ async def upload_file(
         sender_id=current_user_id,
         receiver_id=receiver_id,
         group_id=group_id,
-        file_name=file.filename,
+        file_name=sanitize_text(file.filename),
         file_path=f"/uploads/{unique_filename}",
         file_type=get_file_type(file.filename),
     )
@@ -531,7 +574,7 @@ async def edit_message(
     if message.sender_id != current_user_id:
         raise HTTPException(status_code=403, detail="Нельзя редактировать чужое сообщение")
 
-    message.content = data.content
+    message.content = sanitize_text(data.content)
     message.is_edited = True
     message.edited_at = datetime.now(timezone.utc)
     db.commit()
@@ -560,6 +603,7 @@ async def delete_message(
     message.is_deleted = True
     message.content = None
     db.commit()
+    logger.info("AUDIT: пользователь %s удалил сообщение %s", current_user_id, message_id)
 
     await _notify_message_update(
         {"type": "message_deleted", "message_id": message.id},
@@ -657,10 +701,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, token: str, db:
                 is_typing = data.get("is_typing", False)
                 if not isinstance(receiver_id, int) or not isinstance(is_typing, bool):
                     continue
+                # Проверяем, что получатель — реальный активный пользователь
+                if receiver_id not in manager.get_online_users():
+                    continue
                 # Rate limit: не более 2 typing-событий в секунду на пользователя
                 now = time.monotonic()
                 if now - _typing_last_sent.get(user_id, 0.0) < 0.5:
                     continue
+                # Защита от утечки памяти: сбрасываем словарь при превышении лимита
+                if len(_typing_last_sent) >= _TYPING_DICT_MAX_SIZE:
+                    _typing_last_sent.clear()
                 _typing_last_sent[user_id] = now
                 await manager.send_typing_status(user_id, receiver_id, is_typing)
 

@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import Optional, List
 from datetime import datetime
+import re
 
 
 # --- User схемы ---
@@ -9,6 +10,20 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
     full_name: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator('password')
+    @classmethod
+    def password_must_be_complex(cls, v: str) -> str:
+        errors = []
+        if not re.search(r'[A-Z]', v):
+            errors.append('заглавную букву')
+        if not re.search(r'[a-z]', v):
+            errors.append('строчную букву')
+        if not re.search(r'\d', v):
+            errors.append('цифру')
+        if errors:
+            raise ValueError(f'Пароль должен содержать: {", ".join(errors)}')
+        return v
 
 
 class UserLogin(BaseModel):

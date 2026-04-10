@@ -12,6 +12,13 @@ dist/
 
 # Electron build
 release/
+release2/
+release3/
+release4/
+release5/
+
+# Claude Code local settings
+.claude/
 
 # Uploads (не коммитим файлы пользователей)
 backend/uploads/*

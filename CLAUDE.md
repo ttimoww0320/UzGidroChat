@@ -60,7 +60,7 @@ Angular 21 standalone app with PrimeNG + PrimeFlex UI components.
 - **Services**: `AuthService` (login/register/token in localStorage), `ChatService` (REST calls + raw WebSocket management)
 - **Components**: `LoginComponent`, `RegisterComponent`, `ChatComponent`
 
-Dual-mode API base URL: in Electron, services connect directly to `http://10.0.90.92:8000`; in browser, they use relative URLs proxied by Nginx.
+Dual-mode API base URL: in Electron, services connect directly to the backend host configured in `preload.js`; in browser, they use relative URLs proxied by Nginx.
 
 ### Nginx (`nginx/nginx.conf`)
 Reverse proxy config: strips `/api/` prefix before forwarding to backend:8000. WebSocket upgrade support on `/ws/`.

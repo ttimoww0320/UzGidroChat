@@ -1,5 +1,6 @@
-const { app, BrowserWindow, session, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, session, ipcMain, dialog, safeStorage } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 let mainWindow;
 
@@ -114,6 +115,45 @@ function setupAutoUpdater() {
     });
   }, 3000);
 }
+
+// ─── Безопасное хранилище токенов (safeStorage) ──────────────────────────────
+function getEncPath(key) {
+  return path.join(app.getPath('userData'), `${key}.enc`);
+}
+
+ipcMain.handle('secure-save', (_event, key, value) => {
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  try {
+    const encrypted = safeStorage.encryptString(value);
+    fs.writeFileSync(getEncPath(key), encrypted);
+    return true;
+  } catch (err) {
+    console.error('secure-save error:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('secure-get', (_event, key) => {
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  const filePath = getEncPath(key);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const data = fs.readFileSync(filePath);
+    return safeStorage.decryptString(data);
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('secure-remove', (_event, key) => {
+  const filePath = getEncPath(key);
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (err) {
+    console.error('secure-remove error:', err);
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 // IPC: ручная проверка обновлений из Angular
 ipcMain.on('check-for-updates', () => {

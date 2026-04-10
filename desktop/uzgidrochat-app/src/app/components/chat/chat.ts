@@ -1233,6 +1233,13 @@ export class ChatComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.chatService.disconnectWebSocket();
     this.subscription?.unsubscribe();
+    if (this.recordingInterval) {
+      clearInterval(this.recordingInterval);
+      this.recordingInterval = null;
+    }
+    if (this.mediaRecorder && this.isRecording) {
+      this.mediaRecorder.stop();
+    }
   }
 
   listenForUpdates(): void {
@@ -1278,7 +1285,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   connectWebSocket(): void {
     if (this.currentUser) {
-      const token = localStorage.getItem('token') || '';
+      const token = this.authService.getToken() || '';
       this.chatService.connectWebSocket(this.currentUser.id, token);
       
       this.subscription = this.chatService.messages$.subscribe((data) => {

@@ -96,7 +96,7 @@ function setupAutoUpdater() {
     }).then(({ response }) => {
       mainWindow?.webContents.send('update-downloaded');
       if (response === 0) {
-        autoUpdater.quitAndInstall();
+        autoUpdater.quitAndInstall(true, true); // тихая установка без wizard'а
       }
     });
   });
@@ -128,6 +128,7 @@ ipcMain.on('check-for-updates', () => {
 app.whenReady().then(() => {
   createWindow();
   setupAutoUpdater();
+
 });
 
 app.on('window-all-closed', () => {

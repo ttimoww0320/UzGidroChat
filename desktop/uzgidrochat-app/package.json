@@ -1,6 +1,6 @@
 {
   "name": "uzgidrochat-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Корпоративный мессенджер для Узбекгидроэнерго",
   "author": "Tim <tim@uzgidro.uz>",
   "main": "electron.js",
@@ -34,7 +34,11 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "UzGidroChat"
     }
   },
   "dependencies": {

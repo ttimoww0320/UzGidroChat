@@ -14,7 +14,8 @@
     "test": "ng test",
     "electron": "ng build && electron .",
     "electron-dev": "electron . --dev",
-    "dist": "ng build && electron-builder"
+    "dist": "ng build && electron-builder",
+    "release": "ng build && electron-builder --publish always"
   },
   "build": {
     "appId": "uz.uzgidro.chat",
@@ -39,6 +40,11 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "UzGidroChat"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "ttimoww0320",
+      "repo": "UzGidroChat"
     }
   },
   "dependencies": {

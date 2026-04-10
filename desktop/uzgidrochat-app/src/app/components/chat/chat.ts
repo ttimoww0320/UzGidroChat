@@ -35,6 +35,24 @@ import { ChatService, Message, Group } from '../../services/chat';
   ],
   template: `
     <p-toast position="top-right"></p-toast>
+
+    <!-- Баннер загрузки обновления -->
+    @if (updateDownloading) {
+      <div class="update-banner">
+        <span class="pi pi-download" style="margin-right:8px"></span>
+        Загрузка обновления... {{ updateProgress }}%
+        <p-progressBar [value]="updateProgress" [showValue]="false" style="width:200px; margin-left:12px; display:inline-block"></p-progressBar>
+      </div>
+    }
+
+    <!-- Баннер: обновление готово -->
+    @if (updateReady) {
+      <div class="update-banner update-ready">
+        <span class="pi pi-check-circle" style="margin-right:8px"></span>
+        Обновление готово — перезапустите приложение для установки
+      </div>
+    }
+
     <div class="chat-container" [class.dark-mode]="darkMode">
       <!-- Боковая панель -->
       <div class="sidebar">
@@ -1111,6 +1129,24 @@ import { ChatService, Message, Group } from '../../services/chat';
     .chat-container.dark-mode .reply-content strong {
       color: #90caf9;
     }
+
+    .update-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 9999;
+      background: #1976d2;
+      color: #fff;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      font-size: 14px;
+    }
+
+    .update-banner.update-ready {
+      background: #388e3c;
+    }
   `]
 })
 export class ChatComponent implements OnInit, OnDestroy {
@@ -1158,7 +1194,12 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   // Ответ на сообщение
   replyToMessage: Message | null = null;
-  
+
+  // Авто-обновление
+  updateDownloading = false;
+  updateProgress = 0;
+  updateReady = false;
+
   private subscription: Subscription | null = null;
 
   constructor(
@@ -1186,11 +1227,35 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.loadUsers();
     this.loadGroups();
     this.connectWebSocket();
+    this.listenForUpdates();
   }
 
   ngOnDestroy(): void {
     this.chatService.disconnectWebSocket();
     this.subscription?.unsubscribe();
+  }
+
+  listenForUpdates(): void {
+    const api = (window as any).electronAPI;
+    if (!api) return; // Не Electron — пропускаем
+
+    api.onUpdateDownloading(() => {
+      this.updateDownloading = true;
+      this.updateProgress = 0;
+    });
+
+    api.onUpdateProgress((percent: number) => {
+      this.updateProgress = percent;
+    });
+
+    api.onUpdateDownloaded(() => {
+      this.updateDownloading = false;
+      this.updateReady = true;
+    });
+
+    api.onUpdateError(() => {
+      this.updateDownloading = false;
+    });
   }
 
   loadUsers(): void {
